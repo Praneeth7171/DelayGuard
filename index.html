@@ -322,13 +322,27 @@
   }
   .why-list li::before{content:"—";position:absolute;left:0;color:var(--ink-faint);}
 
-  .action-card{
-    background:var(--bg-dark);color:#fff;border-radius:12px;padding:13px 15px;
-    display:flex;align-items:flex-start;gap:10px;
+  .status-update-card{
+    background:var(--bg-dark);color:#fff;border-radius:12px;padding:15px;
   }
-  .action-card .ic{font-size:17px;flex:none;}
-  .action-card .at{font-size:11px;color:var(--teal-bright);font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px;}
-  .action-card .av{font-size:13px;font-weight:600;}
+  .status-update-card .su-label{font-size:11px;color:var(--teal-bright);font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin-bottom:10px;}
+  .status-update-card .su-row{display:flex;gap:10px;margin-bottom:10px;}
+  .status-update-card .su-field{flex:1;display:flex;flex-direction:column;gap:5px;}
+  .status-update-card .su-field label{font-size:11px;color:rgba(255,255,255,0.55);}
+  .status-update-card select, .status-update-card textarea{
+    background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);color:#fff;
+    border-radius:8px;padding:8px 9px;font-size:12.5px;font-family:inherit;resize:vertical;
+  }
+  .status-update-card select:focus, .status-update-card textarea:focus{outline:none;border-color:var(--teal-bright);}
+  .status-update-card .su-save{
+    width:100%;border:none;border-radius:8px;padding:9px 12px;margin-top:2px;
+    background:var(--teal);color:#fff;font-weight:700;font-size:13px;
+  }
+  .status-update-card .su-save:hover{background:var(--teal-bright);}
+  .status-update-card .su-save:disabled{opacity:.6;cursor:default;}
+  .status-update-card .su-msg{font-size:11.5px;margin-top:8px;color:rgba(255,255,255,0.65);min-height:14px;}
+  .status-update-card .su-msg.err{color:#ff9d90;}
+  .status-update-card .su-msg.ok{color:var(--teal-bright);}
 
   /* bottleneck + dept */
   .panel-2col{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
@@ -429,7 +443,7 @@
       </form>
 
       <div class="login-note">
-        Click on — <span id="demo-hint">below demo credentials then click enter workspace</span>
+        Demo access — <span id="demo-hint">admin@cityservices.gov / admin123</span>
         <br><button type="button" id="fill-demo">Use demo credentials</button>
       </div>
     </div>
@@ -466,7 +480,23 @@
       Alerts
     </a>
 
+    <div class="nav-group" id="nav-group-data" style="display:none;">Data</div>
+    <div id="admin-data-panel" style="display:none;padding:8px 10px 4px;">
+      <a href="/api/upload/template" id="download-template-link" style="display:flex;align-items:center;gap:8px;color:rgba(255,255,255,0.75);font-size:12.5px;text-decoration:none;padding:8px 0;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Download template
+      </a>
+      <label style="display:flex;align-items:center;gap:8px;color:rgba(255,255,255,0.75);font-size:12.5px;padding:8px 0;cursor:pointer;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 21V9m0 0l-4 4m4-4l4 4M4 3h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span id="upload-label-text">Import Excel</span>
+        <input type="file" id="upload-input" accept=".xlsx,.xls" style="display:none;">
+      </label>
+      <div id="upload-status" style="font-size:11.5px;color:rgba(255,255,255,0.5);padding:2px 0 4px;"></div>
+    </div>
+
     <div class="sidebar-spacer"></div>
+
+    <div id="sync-error" style="display:none;background:rgba(221,92,79,0.16);color:#ffb3a8;font-size:11.5px;border-radius:8px;padding:8px 10px;margin-bottom:10px;"></div>
 
     <div class="sidebar-alert" id="sidebar-alert-box">
       <b id="sidebar-alert-count">0 at risk</b>
@@ -556,117 +586,57 @@
 (function(){
   "use strict";
 
-  /* ---------------- reference data ---------------- */
+  /* ---------------- reference data (mirrors backend models.py, used only
+     for the admin-side bottleneck aggregation — the actual risk scoring
+     happens server-side in models.py so it can't be tampered with client-side) ---------------- */
   var STAGE_ORDER = ["Intake","Verification","Document Review","Approval","Completion"];
   var STAGE_NORMAL = {"Intake":1,"Verification":2,"Document Review":2,"Approval":2,"Completion":1};
-  var STAGE_DELAY_RATE = {"Intake":0.05,"Verification":0.18,"Document Review":0.24,"Approval":0.46,"Completion":0.03};
   var DEPT_DELAY_RATE = {
     "Revenue":0.42,"Transport":0.19,"Municipal Services":0.27,"Registration":0.35,"Welfare":0.15
   };
 
-  var RAW_REQUESTS = [
-    {id:"R101",department:"Revenue",service:"Land Registration (RTC)",importance:"Critical",stage:"Approval",daysRemaining:1,slaWindow:10,daysInStage:5,previousDelays:3,officer:"K. Rao",mine:true},
-    {id:"R102",department:"Transport",service:"Driving Licence Renewal",importance:"Normal",stage:"Approval",daysRemaining:4,slaWindow:12,daysInStage:2,previousDelays:0,officer:"S. Iyer",mine:false},
-    {id:"R103",department:"Revenue",service:"Income Certificate",importance:"Normal",stage:"Document Review",daysRemaining:1,slaWindow:7,daysInStage:4,previousDelays:2,officer:"K. Rao",mine:true},
-    {id:"R104",department:"Registration",service:"Property Mutation",importance:"Critical",stage:"Verification",daysRemaining:6,slaWindow:15,daysInStage:2,previousDelays:1,officer:"P. Reddy",mine:false},
-    {id:"R105",department:"Welfare",service:"Scholarship Application",importance:"Normal",stage:"Intake",daysRemaining:8,slaWindow:10,daysInStage:1,previousDelays:0,officer:"A. Basu",mine:false},
-    {id:"R106",department:"Municipal Services",service:"Water Connection",importance:"Normal",stage:"Approval",daysRemaining:2,slaWindow:9,daysInStage:4,previousDelays:2,officer:"M. Fernandes",mine:true},
-    {id:"R107",department:"Registration",service:"Birth Certificate",importance:"Low",stage:"Document Review",daysRemaining:5,slaWindow:6,daysInStage:1,previousDelays:0,officer:"P. Reddy",mine:false},
-    {id:"R108",department:"Revenue",service:"Land Registration (RTC)",importance:"Critical",stage:"Approval",daysRemaining:0,slaWindow:10,daysInStage:7,previousDelays:4,officer:"K. Rao",mine:true},
-    {id:"R109",department:"Transport",service:"Trade Licence",importance:"Normal",stage:"Verification",daysRemaining:3,slaWindow:8,daysInStage:1,previousDelays:0,officer:"S. Iyer",mine:false},
-    {id:"R110",department:"Welfare",service:"Pension Verification",importance:"Critical",stage:"Approval",daysRemaining:2,slaWindow:9,daysInStage:5,previousDelays:2,officer:"A. Basu",mine:true},
-    {id:"R111",department:"Municipal Services",service:"Building Permission",importance:"Normal",stage:"Document Review",daysRemaining:7,slaWindow:20,daysInStage:3,previousDelays:1,officer:"M. Fernandes",mine:false},
-    {id:"R112",department:"Registration",service:"Caste Certificate",importance:"Normal",stage:"Intake",daysRemaining:5,slaWindow:7,daysInStage:1,previousDelays:0,officer:"P. Reddy",mine:false},
-    {id:"R113",department:"Revenue",service:"Mutation Certificate",importance:"Normal",stage:"Verification",daysRemaining:6,slaWindow:10,daysInStage:2,previousDelays:1,officer:"K. Rao",mine:false},
-    {id:"R114",department:"Transport",service:"Vehicle Fitness Certificate",importance:"Low",stage:"Completion",daysRemaining:3,slaWindow:6,daysInStage:1,previousDelays:0,officer:"S. Iyer",mine:false},
-    {id:"R115",department:"Welfare",service:"Disability Certificate",importance:"Critical",stage:"Document Review",daysRemaining:2,slaWindow:8,daysInStage:4,previousDelays:2,officer:"A. Basu",mine:true},
-    {id:"R116",department:"Municipal Services",service:"Trade Licence Renewal",importance:"Normal",stage:"Intake",daysRemaining:9,slaWindow:12,daysInStage:1,previousDelays:0,officer:"M. Fernandes",mine:false},
-    {id:"R117",department:"Revenue",service:"Land Records Correction",importance:"Normal",stage:"Approval",daysRemaining:3,slaWindow:9,daysInStage:3,previousDelays:1,officer:"K. Rao",mine:false},
-    {id:"R118",department:"Registration",service:"Marriage Certificate",importance:"Low",stage:"Verification",daysRemaining:8,slaWindow:10,daysInStage:2,previousDelays:0,officer:"P. Reddy",mine:false},
-    {id:"R119",department:"Transport",service:"Learner's Licence",importance:"Normal",stage:"Completion",daysRemaining:4,slaWindow:5,daysInStage:1,previousDelays:0,officer:"S. Iyer",mine:false},
-    {id:"R120",department:"Welfare",service:"Ration Card Update",importance:"Normal",stage:"Approval",daysRemaining:1,slaWindow:7,daysInStage:6,previousDelays:3,officer:"A. Basu",mine:true}
-  ];
-
-  /* ---------------- risk engine ---------------- */
-  function enrich(r){
-    var normal = STAGE_NORMAL[r.stage];
-    var stageDelayRate = STAGE_DELAY_RATE[r.stage];
-    var deptRate = DEPT_DELAY_RATE[r.department];
-
-    var deadlineUrgency = r.daysRemaining <= 0 ? 100 : Math.max(0, 100 - (r.daysRemaining / r.slaWindow) * 100);
-    var stageDelay = Math.min(100, (r.daysInStage / normal) * 50);
-    var historicalDelay = stageDelayRate * 100;
-    var departmentRisk = deptRate * 100;
-
-    var riskScore = Math.round(deadlineUrgency*0.40 + stageDelay*0.30 + historicalDelay*0.20 + departmentRisk*0.10);
-    riskScore = Math.max(0, Math.min(100, riskScore));
-
-    var weight = r.importance === "Critical" ? 1.5 : (r.importance === "Low" ? 0.7 : 1.0);
-    var priorityScore = Math.round(riskScore * weight);
-
-    var category = riskScore <= 30 ? "Low" : (riskScore <= 60 ? "Medium" : "High");
-    if (r.daysRemaining <= 0) category = "Breached";
-
-    var reasons = [];
-    if (r.daysRemaining <= 0){
-      reasons.push("The SLA deadline has already passed.");
-    } else if (r.daysRemaining <= 1){
-      reasons.push("Only " + r.daysRemaining + " day remains before the SLA deadline.");
-    } else if (r.daysRemaining <= 3){
-      reasons.push("Just " + r.daysRemaining + " days remain before the SLA deadline.");
-    }
-    if (r.daysInStage > normal){
-      reasons.push("Stuck in " + r.stage + " for " + r.daysInStage + " day" + (r.daysInStage>1?"s":"") + " — typical duration is " + normal + " day" + (normal>1?"s":"") + ".");
-    }
-    if (stageDelayRate >= 0.3){
-      reasons.push(r.stage + " has a " + Math.round(stageDelayRate*100) + "% historical delay rate across all requests.");
-    }
-    if (deptRate >= 0.3){
-      reasons.push(r.department + " shows a " + Math.round(deptRate*100) + "% historical SLA delay rate.");
-    }
-    if (r.previousDelays >= 2){
-      reasons.push("This request has already been delayed " + r.previousDelays + " times in earlier stages.");
-    }
-    if (reasons.length === 0){
-      reasons.push("Progressing normally within the expected timeline for this stage.");
-    }
-
-    var action, actionIcon;
-    if (r.daysRemaining <= 1){
-      action = "Escalate immediately"; actionIcon = "🚨";
-    } else if (r.daysInStage > normal * 1.5){
-      action = "Reassign to an available officer"; actionIcon = "👤";
-    } else if (deptRate >= 0.3){
-      action = "Add resources to this department's queue"; actionIcon = "⚡";
-    } else if (r.importance === "Critical"){
-      action = "Mark as priority and expedite"; actionIcon = "⭐";
-    } else {
-      action = "Monitor — currently on track"; actionIcon = "🟢";
-    }
-
-    var out = {};
-    for (var k in r){ out[k] = r[k]; }
-    out.normal = normal;
-    out.riskScore = riskScore;
-    out.priorityScore = priorityScore;
-    out.category = category;
-    out.reasons = reasons;
-    out.action = action;
-    out.actionIcon = actionIcon;
-    return out;
+  /* ---------------- API helpers ---------------- */
+  function api(path, opts){
+    opts = opts || {};
+    opts.credentials = "same-origin";
+    return fetch(path, opts).then(function(res){
+      return res.json().then(function(data){
+        if (!res.ok){ throw new Error(data.error || "Request failed"); }
+        return data;
+      });
+    });
+  }
+  function apiLogin(email, password){
+    return api("/api/login", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({email:email, password:password})
+    });
+  }
+  function apiMe(){ return api("/api/me"); }
+  function apiLogout(){ return api("/api/logout", {method:"POST"}); }
+  function apiGetRequests(){ return api("/api/requests"); }
+  function apiUpload(file){
+    var fd = new FormData();
+    fd.append("file", file);
+    return api("/api/upload", {method:"POST", body:fd});
+  }
+  function apiUpdateRequest(id, payload){
+    return api("/api/requests/" + encodeURIComponent(id), {
+      method:"PATCH", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    });
   }
 
-  var ENRICHED = RAW_REQUESTS.map(enrich);
-
   /* ---------------- state ---------------- */
-  var currentUser = null; // {role, name}
+  var currentUser = null; // {id, name, email, role}
+  var ENRICHED = [];
   var selectedId = null;
   var filters = { dept:"all", risk:"all", q:"" };
 
   /* ---------------- login screen behaviour ---------------- */
   var demoCreds = {
     admin: { email:"admin@cityservices.gov", password:"admin123", label:"admin@cityservices.gov / admin123" },
-    employee: { email:"employee@cityservices.gov", password:"employee123", label:"employee@cityservices.gov / employee123" }
+    employee: { email:"employee1@cityservices.gov", password:"employee123", label:"employee1@cityservices.gov / employee123" }
   };
   var activeTab = "admin";
 
@@ -695,20 +665,40 @@
 
   document.getElementById("login-form").addEventListener("submit", function(e){
     e.preventDefault();
-    var cred = demoCreds[activeTab];
-    if (emailInput.value.trim().toLowerCase() === cred.email && passwordInput.value === cred.password){
-      loginError.classList.remove("show");
-      currentUser = {
-        role: activeTab,
-        name: activeTab === "admin" ? "Admin User" : "Field Officer"
-      };
-      enterApp();
-    } else {
-      loginError.classList.add("show");
-    }
+    var submitBtn = document.querySelector("#login-form .submit-btn");
+    submitBtn.disabled = true;
+    apiLogin(emailInput.value.trim(), passwordInput.value)
+      .then(function(data){
+        loginError.classList.remove("show");
+        currentUser = data.user;
+        return enterApp();
+      })
+      .catch(function(err){
+        loginError.textContent = err.message || "That email and password don't match our records.";
+        loginError.classList.add("show");
+      })
+      .finally(function(){ submitBtn.disabled = false; });
   });
 
   /* ---------------- app entry / exit ---------------- */
+  function showSyncError(msg){
+    var box = document.getElementById("sync-error");
+    if (!msg){ box.style.display = "none"; box.textContent = ""; return; }
+    box.textContent = msg;
+    box.style.display = "block";
+  }
+
+  function loadData(){
+    return apiGetRequests().then(function(data){
+      ENRICHED = data;
+      showSyncError(null);
+      populateDeptFilter();
+      renderAll();
+    }).catch(function(err){
+      showSyncError("Couldn't load latest data: " + err.message);
+    });
+  }
+
   function enterApp(){
     document.getElementById("login-screen").style.display = "none";
     var app = document.getElementById("app-screen");
@@ -716,7 +706,7 @@
 
     document.getElementById("user-name").textContent = currentUser.name;
     document.getElementById("user-role-label").textContent = currentUser.role === "admin" ? "Administrator" : "Employee";
-    document.getElementById("user-avatar").textContent = currentUser.role === "admin" ? "A" : "F";
+    document.getElementById("user-avatar").textContent = currentUser.name.charAt(0).toUpperCase();
 
     var hour = new Date().getHours();
     var timeGreeting = hour < 12 ? "Good morning" : (hour < 17 ? "Good afternoon" : "Good evening");
@@ -732,30 +722,59 @@
 
     var bottleneckNav = document.getElementById("nav-bottlenecks");
     var bottleneckSection = document.getElementById("bottlenecks");
-    if (currentUser.role === "admin"){
-      bottleneckNav.style.display = "";
-      bottleneckSection.style.display = "";
-    } else {
-      bottleneckNav.style.display = "none";
-      bottleneckSection.style.display = "none";
-    }
+    var isAdmin = currentUser.role === "admin";
+    bottleneckNav.style.display = isAdmin ? "" : "none";
+    bottleneckSection.style.display = isAdmin ? "" : "none";
+    document.getElementById("nav-group-data").style.display = isAdmin ? "" : "none";
+    document.getElementById("admin-data-panel").style.display = isAdmin ? "" : "none";
 
-    populateDeptFilter();
     filters = { dept:"all", risk:"all", q:"" };
     document.getElementById("filter-dept").value = "all";
     document.getElementById("filter-risk").value = "all";
     document.getElementById("search-input").value = "";
     selectedId = null;
 
-    renderAll();
+    return loadData();
   }
 
   document.getElementById("logout-btn").addEventListener("click", function(){
-    currentUser = null;
-    document.getElementById("app-screen").classList.remove("show");
-    document.getElementById("login-screen").style.display = "flex";
-    document.getElementById("login-form").reset();
-    loginError.classList.remove("show");
+    apiLogout().finally(function(){
+      currentUser = null;
+      ENRICHED = [];
+      document.getElementById("app-screen").classList.remove("show");
+      document.getElementById("login-screen").style.display = "flex";
+      document.getElementById("login-form").reset();
+      loginError.classList.remove("show");
+    });
+  });
+
+  /* ---------------- admin: excel template + import ---------------- */
+  var uploadInput = document.getElementById("upload-input");
+  var uploadStatus = document.getElementById("upload-status");
+  uploadInput.addEventListener("change", function(){
+    var file = uploadInput.files[0];
+    if (!file) return;
+    uploadStatus.textContent = "Uploading " + file.name + "…";
+    apiUpload(file).then(function(res){
+      var msg = res.created + " created, " + res.updated + " updated";
+      if (res.errors && res.errors.length){
+        msg += " — " + res.errors.length + " row error(s)";
+      }
+      uploadStatus.textContent = msg;
+      return loadData();
+    }).catch(function(err){
+      uploadStatus.textContent = "Import failed: " + err.message;
+    }).finally(function(){
+      uploadInput.value = "";
+    });
+  });
+
+  /* ---------------- restore session on page load ---------------- */
+  apiMe().then(function(data){
+    if (data.user){
+      currentUser = data.user;
+      enterApp();
+    }
   });
 
   /* nav smooth-scroll + active state */
@@ -771,7 +790,9 @@
 
   /* ---------------- data helpers ---------------- */
   function baseSet(){
-    return currentUser.role === "employee" ? ENRICHED.filter(function(r){ return r.mine; }) : ENRICHED.slice();
+    // The server already scopes /api/requests to "my requests" for employees,
+    // so no client-side filtering by owner is needed here.
+    return ENRICHED.slice();
   }
   function filteredSet(){
     return baseSet().filter(function(r){
@@ -827,7 +848,7 @@
     } else {
       strip.innerHTML = atRisk.map(function(r){
         var text = r.daysRemaining <= 0 ? "has already missed its SLA deadline." : "has only " + r.daysRemaining + " day left before its SLA deadline.";
-        return '<div class="alert-card"><span class="a-icon">'+(r.daysRemaining<=0?'⛔':'🔔')+'</span><span class="a-id">'+r.id+'</span><span class="a-text">'+r.service+' ('+r.department+') '+text+'</span></div>';
+        return '<div class="alert-card"><span class="a-id">'+r.id+'</span><span class="a-text">'+r.service+' ('+r.department+') '+text+'</span></div>';
       }).join("");
     }
 
@@ -902,7 +923,47 @@
 
       '<ul class="why-list">'+reasonsHtml+'</ul>'+
 
-      '<div class="action-card"><span class="ic">'+r.actionIcon+'</span><div><div class="at">Recommended action</div><div class="av">'+r.action+'</div></div></div>';
+      '<div class="status-update-card">'+
+        '<div class="su-label">Update this request</div>'+
+        '<div class="su-row">'+
+          '<div class="su-field"><label>Stage</label><select id="update-stage">'+
+            STAGE_ORDER.map(function(s){ return '<option value="'+s+'"'+(s===r.stage?' selected':'')+'>'+s+'</option>'; }).join("")+
+          '</select></div>'+
+          '<div class="su-field"><label>Status</label><select id="update-status-select">'+
+            '<option value="Open"'+(r.status==="Open"?' selected':'')+'>Open</option>'+
+            '<option value="Completed"'+(r.status==="Completed"?' selected':'')+'>Completed</option>'+
+          '</select></div>'+
+        '</div>'+
+        '<div class="su-field"><label>Remarks</label><textarea id="update-remarks" rows="2" placeholder="Add a note for this request...">'+(r.remarks || "")+'</textarea></div>'+
+        '<button class="su-save" id="update-save-btn">Save update</button>'+
+        '<div class="su-msg" id="update-msg"></div>'+
+      '</div>';
+
+    var saveBtn = document.getElementById("update-save-btn");
+    var msgBox = document.getElementById("update-msg");
+    saveBtn.addEventListener("click", function(){
+      var payload = {
+        stage: document.getElementById("update-stage").value,
+        status: document.getElementById("update-status-select").value,
+        remarks: document.getElementById("update-remarks").value
+      };
+      saveBtn.disabled = true;
+      msgBox.textContent = "Saving...";
+      msgBox.className = "su-msg";
+      apiUpdateRequest(r.id, payload).then(function(updated){
+        var idx = ENRICHED.findIndex(function(x){ return x.id === updated.id; });
+        if (idx !== -1) ENRICHED[idx] = updated;
+        msgBox.textContent = "Saved.";
+        msgBox.className = "su-msg ok";
+        renderKpisAndAlerts();
+        renderTable();
+      }).catch(function(err){
+        msgBox.textContent = err.message || "Could not save this update.";
+        msgBox.className = "su-msg err";
+      }).finally(function(){
+        saveBtn.disabled = false;
+      });
+    });
   }
 
   /* ---------------- render: bottlenecks + department table (admin only) ---------------- */
@@ -929,7 +990,7 @@
       return '<div class="bottleneck-row">'+
         '<div class="bl-top"><span class="bl-stage">'+row.stage+'</span><span class="bl-val">'+row.avg.toFixed(1)+'d avg / '+row.normal+'d normal</span></div>'+
         '<div class="bl-track"><div class="bl-fill'+(isHot?' hot':'')+'" style="width:'+pct+'%;"></div></div>'+
-        (isHot ? '<span class="bl-flag">⚠ Primary bottleneck</span>' : '') +
+        (isHot ? '<span class="bl-flag">Primary bottleneck</span>' : '') +
       '</div>';
     }).join("");
 
